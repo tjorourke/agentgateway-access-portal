@@ -42,7 +42,7 @@ helm dependency build charts/agentgateway-access-portal
 helm upgrade --install access-portal charts/agentgateway-access-portal \
   --namespace access-portal --create-namespace \
   --set publicURL=https://access.example.com \
-  --set gateway.namespaces[0]=agentgateway-system \
+  --set 'gateway.namespaces[0]=agentgateway-system' \
   --wait --timeout 10m
 ```
 
