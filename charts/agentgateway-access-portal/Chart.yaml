@@ -1,0 +1,15 @@
+apiVersion: v2
+name: agentgateway-access-portal
+description: Employee access-token management for agentgateway with OIDC and Kubernetes lifecycle policies.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.29.0-0"
+home: https://github.com/tjorourke/agentgateway-access-portal
+sources:
+  - https://github.com/tjorourke/agentgateway-access-portal
+dependencies:
+  - name: kyverno
+    version: "3.9.0"
+    repository: https://kyverno.github.io/kyverno
+    condition: kyverno.enabled

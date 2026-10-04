@@ -1,0 +1,128 @@
+{{- if .Values.policies.enabled }}
+{{- $name := include "portal.name" . -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}-policy-bundle
+data:
+  policies.yaml: |
+    {{- tpl (.Files.Get "files/policies.yaml") . | nindent 4 }}
+---
+{{- if not (lookup "v1" "ConfigMap" .Release.Namespace (printf "%s-clock" $name)) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}-clock
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-5"
+    helm.sh/hook-delete-policy: before-hook-creation
+    helm.sh/resource-policy: keep
+data: {tick: initial}
+---
+{{- end }}
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: {{ $name }}-clock}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: {{ $name }}-clock}
+rules:
+  - apiGroups: [""]
+    resources: [configmaps]
+    resourceNames: [{{ $name }}-clock]
+    verbs: [patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: {{ $name }}-clock}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: {{ $name }}-clock}
+subjects: [{kind: ServiceAccount, name: {{ $name }}-clock, namespace: {{ .Release.Namespace }}}]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $name }}-kyverno-read
+  labels:
+    rbac.kyverno.io/aggregate-to-background-controller: "true"
+    rbac.kyverno.io/aggregate-to-admission-controller: "true"
+    rbac.kyverno.io/aggregate-to-reports-controller: "true"
+rules:
+  - apiGroups: [accessportal.io]
+    resources: [accesstokens]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: {{ $name }}-kyverno}
+rules:
+  - apiGroups: [accessportal.io]
+    resources: [accesstokens]
+    verbs: [get, list, watch, update, patch]
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [get, list, watch, create, update, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: {{ $name }}-kyverno}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: {{ $name }}-kyverno}
+subjects:
+  - {kind: ServiceAccount, name: {{ .Values.kyvernoIntegration.backgroundServiceAccount }}, namespace: {{ .Values.kyvernoIntegration.namespace }}}
+  - {kind: ServiceAccount, name: {{ .Values.kyvernoIntegration.admissionServiceAccount }}, namespace: {{ .Values.kyvernoIntegration.namespace }}}
+  - {kind: ServiceAccount, name: {{ .Values.kyvernoIntegration.reportsServiceAccount }}, namespace: {{ .Values.kyvernoIntegration.namespace }}}
+{{- range .Values.gateway.namespaces }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: {{ $name }}-kyverno, namespace: {{ . }}}
+rules:
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [get, list, watch, create, update, patch, delete]
+  {{- if $.Values.enterpriseBudgets.enabled }}
+  - apiGroups: [enterpriseagentgateway.solo.io]
+    resources: [enterpriseagentgatewaybudgets]
+    verbs: [get, list, watch, create, update, patch, delete]
+  {{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: {{ $name }}-kyverno, namespace: {{ . }}}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: {{ $name }}-kyverno}
+subjects:
+  - {kind: ServiceAccount, name: {{ $.Values.kyvernoIntegration.backgroundServiceAccount }}, namespace: {{ $.Values.kyvernoIntegration.namespace }}}
+  - {kind: ServiceAccount, name: {{ $.Values.kyvernoIntegration.admissionServiceAccount }}, namespace: {{ $.Values.kyvernoIntegration.namespace }}}
+{{- end }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata: {name: {{ $name }}-clock}
+spec:
+  schedule: {{ .Values.policies.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 45
+      backoffLimit: 2
+      template:
+        spec:
+          serviceAccountName: {{ $name }}-clock
+          restartPolicy: Never
+          securityContext: {runAsNonRoot: true, runAsUser: 10001, seccompProfile: {type: RuntimeDefault}}
+          containers:
+            - name: tick
+              image: {{ printf "%s:%s" .Values.image.repository .Values.image.tag | quote }}
+              command: [python, -m, portal.install, tick]
+              env:
+                - {name: PORTAL_NAMESPACE, value: {{ .Release.Namespace | quote }}}
+                - {name: PORTAL_INSTANCE, value: {{ $name | quote }}}
+              securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+              resources: {requests: {cpu: 10m, memory: 32Mi}, limits: {memory: 128Mi}}
+{{- end }}

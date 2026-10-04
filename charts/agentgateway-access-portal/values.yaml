@@ -1,0 +1,90 @@
+image:
+  repository: ghcr.io/tjorourke/agentgateway-access-portal
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+replicaCount: 1
+publicURL: http://localhost:8080
+service:
+  port: 8080
+ingress:
+  enabled: false
+  className: ""
+  host: portal.example.com
+  annotations: {}
+  tls: []
+resources:
+  requests: {cpu: 50m, memory: 128Mi}
+  limits: {memory: 384Mi}
+serviceAccount:
+  create: true
+  name: ""
+rbac:
+  create: true
+gateway:
+  # These namespaces must already exist. The wizard cannot expand this scope.
+  namespaces: [agentgateway-system]
+  managePolicy: true
+enterpriseBudgets:
+  # Requires EnterpriseAgentgatewayBudget CRDs. Disable for an OSS-only cluster.
+  enabled: true
+auth:
+  sessionSeconds: 3600
+  allowInsecureOIDC: false
+  clientSecret:
+    existingSecret: ""
+    key: client-secret
+secrets:
+  # Optional Secret with session-key, token-encryption-key and bootstrap-token.
+  # Otherwise random credentials are generated and preserved on upgrades.
+  existingSecret: ""
+settings:
+  # The wizard/day-two ConfigMap survives Helm upgrades by default.
+  resetOnUpgrade: false
+config:
+  configured: false
+  branding:
+    company: Your organisation
+    title: AI access tokens
+    subtitle: Manage access tokens for your applications.
+    accent: "#087f68"
+    logo: ""
+  auth:
+    issuer: ""
+    clientId: ""
+    groupsClaim: groups
+    adminGroups: [portal-admins]
+    userGroups: [portal-users]
+    allowAllAuthenticated: false
+  features:
+    userTranscript: false
+    userPolicies: false
+  gateway:
+    namespace: ""
+    name: ""
+    edition: enterprise
+    testURL: ""
+    testModel: ""
+  lifecycle:
+    defaultExpiryMinutes: 1440
+    rotationMinutes: 720
+    automaticRotation: true
+    dailyTokenQuota: 100000
+    models: [default]
+policies:
+  # Install the portal policies into existing Kyverno by default.
+  # false means the customer supplies the documented AccessToken reconciler.
+  enabled: true
+  schedule: "* * * * *"
+  installerTimeoutSeconds: 300
+kyvernoIntegration:
+  namespace: kyverno
+  admissionServiceAccount: kyverno-admission-controller
+  backgroundServiceAccount: kyverno-background-controller
+  reportsServiceAccount: kyverno-reports-controller
+kyverno:
+  # Engine installation is opt-in. Dependency 3.9.0 pins Kyverno v1.19.0.
+  enabled: false
+  namespaceOverride: kyverno
+  fullnameOverride: kyverno
+  admissionController:
+    crdWatcher: true

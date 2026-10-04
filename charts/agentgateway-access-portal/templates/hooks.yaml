@@ -1,0 +1,94 @@
+{{- if .Values.policies.enabled }}
+{{- $name := include "portal.name" . -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: {{ $name }}-installer, namespace: {{ .Values.kyvernoIntegration.namespace }}}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {name: {{ $name }}-installer}
+rules:
+  - apiGroups: [policies.kyverno.io]
+    resources: [generatingpolicies, mutatingpolicies, validatingpolicies]
+    verbs: [get, create, update, patch, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: {{ $name }}-installer}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: {{ $name }}-installer}
+subjects: [{kind: ServiceAccount, name: {{ $name }}-installer, namespace: {{ .Values.kyvernoIntegration.namespace }}}]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: {{ $name }}-installer}
+rules:
+  - apiGroups: [accessportal.io]
+    resources: [accesstokens]
+    verbs: [get, list, create, update, patch, delete]
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [get]
+  - apiGroups: [""]
+    resources: [configmaps]
+    resourceNames: [{{ $name }}-clock]
+    verbs: [patch]
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get, list, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: {{ $name }}-installer}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: {{ $name }}-installer}
+subjects: [{kind: ServiceAccount, name: {{ $name }}-installer, namespace: {{ .Values.kyvernoIntegration.namespace }}}]
+{{- range .Values.gateway.namespaces }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: {{ $name }}-cleanup, namespace: {{ . }}}
+rules:
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [get, list, delete]
+  - apiGroups: [enterpriseagentgateway.solo.io]
+    resources: [enterpriseagentgatewaybudgets]
+    verbs: [get, list, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: {{ $name }}-cleanup, namespace: {{ . }}}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: {{ $name }}-cleanup}
+subjects: [{kind: ServiceAccount, name: {{ $name }}-installer, namespace: {{ $.Values.kyvernoIntegration.namespace }}}]
+{{- end }}
+{{- range $action := list "apply" "cleanup" }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $name }}-{{ $action }}-policies
+  namespace: {{ $.Values.kyvernoIntegration.namespace }}
+  annotations:
+    helm.sh/hook: {{ if eq $action "apply" }}post-install,post-upgrade{{ else }}pre-delete{{ end }}
+    helm.sh/hook-weight: "10"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  activeDeadlineSeconds: {{ $.Values.policies.installerTimeoutSeconds }}
+  backoffLimit: 1
+  template:
+    spec:
+      serviceAccountName: {{ $name }}-installer
+      restartPolicy: Never
+      securityContext: {runAsNonRoot: true, runAsUser: 10001, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: policies
+          image: {{ printf "%s:%s" $.Values.image.repository $.Values.image.tag | quote }}
+          command: [python, -m, portal.install, {{ $action }}]
+          env:
+            - {name: PORTAL_NAMESPACE, value: {{ $.Release.Namespace | quote }}}
+            - {name: PORTAL_INSTANCE, value: {{ $name | quote }}}
+            - {name: GATEWAY_NAMESPACES, value: {{ join "," $.Values.gateway.namespaces | quote }}}
+            - {name: INSTALL_TIMEOUT, value: {{ sub $.Values.policies.installerTimeoutSeconds 20 | quote }}}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          resources: {requests: {cpu: 20m, memory: 64Mi}, limits: {memory: 256Mi}}
+{{- end }}
+{{- end }}

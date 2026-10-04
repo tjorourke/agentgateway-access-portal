@@ -1,0 +1,75 @@
+{{- if .Values.rbac.create }}
+{{- $name := include "portal.name" . -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: {{ $name }}, namespace: {{ .Release.Namespace }}}
+rules:
+  - apiGroups: [accessportal.io]
+    resources: [accesstokens]
+    verbs: [get, list, create, update, patch, delete]
+  - apiGroups: [""]
+    resources: [configmaps]
+    resourceNames: [{{ $name }}-settings]
+    verbs: [get, update, patch]
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get, create, update, patch, delete]
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [get, list, create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: {{ $name }}, namespace: {{ .Release.Namespace }}}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: {{ $name }}}
+subjects: [{kind: ServiceAccount, name: {{ include "portal.sa" . }}, namespace: {{ .Release.Namespace }}}]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {name: {{ $name }}-discovery}
+rules:
+  - apiGroups: [gateway.networking.k8s.io]
+    resources: [gatewayclasses]
+    verbs: [get, list]
+  - apiGroups: [authorization.k8s.io]
+    resources: [selfsubjectaccessreviews]
+    verbs: [create]
+  - apiGroups: [policies.kyverno.io]
+    resources: [generatingpolicies, mutatingpolicies, validatingpolicies]
+    resourceNames: [{{ $name }}-publish, {{ $name }}-hashes, {{ $name }}-expire, {{ $name }}-rotate, {{ $name }}-budgets, {{ $name }}-budget-settings, {{ $name }}-events, {{ $name }}-ownership]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: {{ $name }}-discovery}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: {{ $name }}-discovery}
+subjects: [{kind: ServiceAccount, name: {{ include "portal.sa" . }}, namespace: {{ .Release.Namespace }}}]
+{{- range .Values.gateway.namespaces }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: {{ $name }}-gateway, namespace: {{ . }}}
+rules:
+  - apiGroups: [gateway.networking.k8s.io]
+    resources: [gateways]
+    verbs: [get, list]
+  - apiGroups: [""]
+    resources: [services, configmaps]
+    verbs: [get, list]
+  {{- if $.Values.gateway.managePolicy }}
+  - apiGroups: [agentgateway.dev, enterpriseagentgateway.solo.io]
+    resources: [agentgatewaypolicies, enterpriseagentgatewaypolicies]
+    verbs: [get, list, create, update, patch]
+  {{- else }}
+  - apiGroups: [agentgateway.dev, enterpriseagentgateway.solo.io]
+    resources: [agentgatewaypolicies, enterpriseagentgatewaypolicies]
+    verbs: [get, list]
+  {{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: {{ $name }}-gateway, namespace: {{ . }}}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: {{ $name }}-gateway}
+subjects: [{kind: ServiceAccount, name: {{ include "portal.sa" $ }}, namespace: {{ $.Release.Namespace }}}]
+{{- end }}
+{{- end }}

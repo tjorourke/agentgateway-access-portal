@@ -1,0 +1,22 @@
+[project]
+name = "agentgateway-access-portal"
+version = "0.1.0"
+description = "An OIDC employee access-token portal for agentgateway, with declarative Kubernetes lifecycle policies."
+requires-python = ">=3.12"
+dependencies = [
+  "Flask==3.1.2", "gunicorn==23.0.0", "httpx==0.28.1",
+  "PyJWT[crypto]==2.10.1", "cryptography>=46,<49", "PyYAML==6.0.2", "Pillow>=11.3,<13"
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8,<10"]
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.package-data]
+portal = ["static/*", "templates/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,6 @@
+{{- if and .Values.policies.enabled (eq .Release.Namespace .Values.kyvernoIntegration.namespace) -}}
+{{- fail "Install the portal in a namespace separate from Kyverno; Kyverno filters its own namespace." -}}
+{{- end -}}
+{{- if and .Values.kyverno.enabled (ne .Values.kyverno.namespaceOverride .Values.kyvernoIntegration.namespace) -}}
+{{- fail "kyverno.namespaceOverride must match kyvernoIntegration.namespace when installing the bundled engine." -}}
+{{- end -}}

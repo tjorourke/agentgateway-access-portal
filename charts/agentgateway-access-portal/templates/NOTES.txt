@@ -1,0 +1,23 @@
+agentgateway Access Portal {{ .Chart.AppVersion }}
+
+1. Open {{ .Values.publicURL }}/admin
+
+   For a local first installation, forward the port used by publicURL:
+   {{- $url := urlParse .Values.publicURL }}
+   {{- $localPort := regexFind ":[0-9]+$" $url.host | trimPrefix ":" | default "8080" }}
+   kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "portal.name" . }} {{ $localPort }}:{{ .Values.service.port }}
+
+2. Retrieve the installation credential:
+   kubectl -n {{ .Release.Namespace }} get secret {{ include "portal.secret" . }} -o jsonpath='{.data.bootstrap-token}' | base64 --decode
+
+3. Configure branding, a discovered Gateway and OIDC group mappings.
+   Bootstrap access is disabled when setup is saved. Sign in through OIDC afterwards.
+
+Kyverno engine installation: {{ .Values.kyverno.enabled }} (pinned dependency 3.9.0 / v1.19.0)
+Portal-managed policies: {{ .Values.policies.enabled }}
+{{- if not .Values.policies.enabled }}
+External reconciliation mode: supply a reconciler before issuing tokens.
+{{- end }}
+
+Runtime settings and encryption/session keys are preserved on Helm upgrades.
+Back up the token-encryption key together with encrypted value Secrets.

@@ -1,0 +1,339 @@
+{{- $name := include "portal.name" . -}}
+apiVersion: policies.kyverno.io/v1
+kind: GeneratingPolicy
+metadata:
+  name: {{ $name }}-publish
+  labels: {accessportal.io/instance: {{ $name | quote }}}
+spec:
+  evaluation:
+    synchronize: {enabled: true}
+    generateExisting: {enabled: true}
+    skipBackgroundRequests: false
+  matchConstraints:
+    namespaceSelector:
+      matchLabels: {kubernetes.io/metadata.name: {{ .Release.Namespace | quote }}}
+    objectSelector:
+      matchLabels: {accessportal.io/instance: {{ $name | quote }}}
+    resourceRules:
+      - apiGroups: [accessportal.io]
+        apiVersions: [v1alpha1]
+        resources: [accesstokens]
+        operations: [CREATE, UPDATE]
+  variables:
+    - name: live
+      expression: "object.spec.status == 'active' ? object.spec.generations.filter(g, g.status in ['active', 'overlapping']) : []"
+    - name: hashes
+      expression: "listObjToMap(variables.live, variables.live, 'id', 'entry')"
+  generate:
+    - template:
+        interpolate: cel
+        value: |
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: (( object.metadata.name ))
+            namespace: (( object.spec.gatewayNamespace ))
+            labels:
+              accessportal.io/instance: {{ $name | quote }}
+              accessportal.io/token-store: "true"
+              accessportal.io/token-record: (( object.metadata.name ))
+          data: (( variables.hashes ))
+---
+apiVersion: policies.kyverno.io/v1
+kind: MutatingPolicy
+metadata:
+  name: {{ $name }}-hashes
+  labels: {accessportal.io/instance: {{ $name | quote }}}
+spec:
+  evaluation:
+    admission: {enabled: true}
+    skipBackgroundRequests: false
+  matchConstraints:
+    namespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: In
+          values: {{ .Values.gateway.namespaces | toJson }}
+    objectSelector:
+      matchLabels:
+        accessportal.io/instance: {{ $name | quote }}
+        accessportal.io/token-store: "true"
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        resources: [configmaps]
+        operations: [CREATE, UPDATE]
+  variables:
+    - name: token
+      expression: "resource.Get('accessportal.io/v1alpha1', 'accesstokens', '{{ .Release.Namespace }}', object.metadata.labels['accessportal.io/token-record'])"
+    - name: live
+      expression: "variables.token.spec.status == 'active' ? variables.token.spec.generations.filter(g, g.status in ['active', 'overlapping']) : []"
+    - name: hashes
+      expression: "listObjToMap(variables.live, variables.live, 'id', 'entry')"
+  mutations:
+    - patchType: JSONPatch
+      jsonPatch:
+        expression: "[JSONPatch{op: 'add', path: '/data', value: variables.hashes}]"
+---
+apiVersion: policies.kyverno.io/v1
+kind: MutatingPolicy
+metadata:
+  name: {{ $name }}-expire
+  labels: {accessportal.io/instance: {{ $name | quote }}}
+spec:
+  evaluation:
+    admission: {enabled: true}
+    mutateExisting: {enabled: true}
+  matchConstraints:
+    namespaceSelector:
+      matchLabels: {kubernetes.io/metadata.name: {{ .Release.Namespace | quote }}}
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        resources: [configmaps]
+        resourceNames: [{{ $name }}-clock]
+        operations: [CREATE, UPDATE]
+  targetMatchConstraints:
+    namespaceSelector:
+      matchLabels: {kubernetes.io/metadata.name: {{ .Release.Namespace | quote }}}
+    resourceRules:
+      - apiGroups: [accessportal.io]
+        apiVersions: [v1alpha1]
+        resources: [accesstokens]
+        operations: [UPDATE]
+  targetMatchConditions:
+    - name: deadline-reached
+      expression: "object.metadata.labels['accessportal.io/instance'] == '{{ $name }}' && object.spec.status == 'active' && timestamp(object.spec.expiresAt) <= time.now()"
+  mutations:
+    - patchType: JSONPatch
+      jsonPatch:
+        expression: >-
+          has(object.spec) ? ([JSONPatch{op: 'replace', path: '/spec/status', value: 'expired'},
+           JSONPatch{op: 'replace', path: '/spec/statusAt', value: string(time.now())},
+           JSONPatch{op: 'add', path: '/spec/pendingRotation', value: null},
+           JSONPatch{op: 'add', path: '/spec/standby', value: null},
+           JSONPatch{op: 'add', path: '/spec/rotatesAt', value: ''}] +
+          object.spec.generations.filter(g, g.status in ['active', 'overlapping']).map(g,
+            JSONPatch{op: 'replace', path: '/spec/generations/' + string(object.spec.generations.indexOf(g)) + '/status', value: 'expired'}) +
+          object.spec.generations.filter(g, g.status in ['active', 'overlapping']).map(g,
+            JSONPatch{op: 'replace', path: '/spec/generations/' + string(object.spec.generations.indexOf(g)) + '/endedAt', value: string(time.now())})) : []
+---
+apiVersion: policies.kyverno.io/v1
+kind: MutatingPolicy
+metadata:
+  name: {{ $name }}-rotate
+  labels: {accessportal.io/instance: {{ $name | quote }}}
+spec:
+  evaluation:
+    admission: {enabled: true}
+    mutateExisting: {enabled: true}
+  matchConstraints:
+    namespaceSelector:
+      matchLabels: {kubernetes.io/metadata.name: {{ .Release.Namespace | quote }}}
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        resources: [configmaps]
+        resourceNames: [{{ $name }}-clock]
+        operations: [CREATE, UPDATE]
+  targetMatchConstraints:
+    namespaceSelector:
+      matchLabels: {kubernetes.io/metadata.name: {{ .Release.Namespace | quote }}}
+    resourceRules:
+      - apiGroups: [accessportal.io]
+        apiVersions: [v1alpha1]
+        resources: [accesstokens]
+        operations: [UPDATE]
+  targetMatchConditions:
+    - name: rotation-due
+      expression: >-
+        object.metadata.labels['accessportal.io/instance'] == '{{ $name }}' && object.spec.status == 'active' && object.spec.standby != null && object.spec.pendingRotation == null &&
+        object.spec.rotatesAt != '' && timestamp(object.spec.rotatesAt) <= time.now() && timestamp(object.spec.expiresAt) > time.now()
+  mutations:
+    - patchType: JSONPatch
+      jsonPatch:
+        expression: >-
+          has(object.spec) ? (object.spec.generations.filter(g, g.status == 'active').map(g,
+            JSONPatch{op: 'replace', path: '/spec/generations/' + string(object.spec.generations.indexOf(g)) + '/status', value: 'overlapping'}) + [
+            JSONPatch{op: 'add', path: '/spec/pendingRotation', value: {
+              'previous': object.spec.generations.filter(g, g.status == 'active')[0].id,
+              'replacement': object.spec.standby.id, 'preparedAt': dyn(string(time.now())), 'verified': dyn(false)}},
+            JSONPatch{op: 'add', path: '/spec/generations/-', value: {
+              'id': object.spec.standby.id, 'entry': object.spec.standby.entry,
+              'mintedAt': dyn(string(time.now())), 'by': dyn('policy'), 'status': dyn('active'), 'endedAt': dyn(null)}},
+            JSONPatch{op: 'replace', path: '/spec/standby', value: null},
+            JSONPatch{op: 'replace', path: '/spec/rotatesAt', value: ''}]) : []
+---
+apiVersion: policies.kyverno.io/v1
+kind: GeneratingPolicy
+metadata:
+  name: {{ $name }}-events
+  labels: {accessportal.io/instance: {{ $name | quote }}}
+spec:
+  evaluation:
+    skipBackgroundRequests: false
+  matchConstraints:
+    namespaceSelector:
+      matchLabels: {kubernetes.io/metadata.name: {{ .Release.Namespace | quote }}}
+    objectSelector:
+      matchLabels: {accessportal.io/instance: {{ $name | quote }}}
+    resourceRules:
+      - apiGroups: [accessportal.io]
+        apiVersions: [v1alpha1]
+        resources: [accesstokens]
+        operations: [UPDATE]
+  matchConditions:
+    - name: scheduled-transition
+      expression: "object.spec.status == 'expired' || (object.spec.pendingRotation != null && object.spec.generations[object.spec.generations.size()-1].by == 'policy')"
+  variables:
+    - name: expired
+      expression: "object.spec.status == 'expired'"
+  generate:
+    - template:
+        interpolate: cel
+        value: |
+          apiVersion: v1
+          kind: Event
+          metadata:
+            name: "(( object.metadata.name + (variables.expired ? '-expired-' : '-rotation-') + string(object.spec.generations.size()) ))"
+            namespace: {{ .Release.Namespace }}
+            labels:
+              accessportal.io/instance: {{ $name | quote }}
+              accessportal.io/owner: (( object.spec.owner ))
+              accessportal.io/token: (( object.metadata.name ))
+          involvedObject:
+            apiVersion: accessportal.io/v1alpha1
+            kind: AccessToken
+            name: (( object.metadata.name ))
+            namespace: {{ .Release.Namespace }}
+          reason: "(( variables.expired ? 'TokenExpired' : 'RotationPrepared' ))"
+          message: "(( variables.expired ? 'Kyverno expired the token and withdrew its live hashes.' : 'Kyverno published a replacement. Existing credentials remain valid until application handover.' ))"
+          type: Normal
+          reportingComponent: accessportal.kyverno
+          reportingInstance: {{ $name }}
+          action: "(( variables.expired ? 'expire' : 'rotate' ))"
+          firstTimestamp: "(( variables.expired ? object.spec.statusAt : object.spec.pendingRotation.preparedAt ))"
+          lastTimestamp: "(( variables.expired ? object.spec.statusAt : object.spec.pendingRotation.preparedAt ))"
+          count: 1
+---
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: {{ $name }}-ownership
+  labels: {accessportal.io/instance: {{ $name | quote }}}
+spec:
+  validationActions: [Deny]
+  matchConstraints:
+    namespaceSelector:
+      matchLabels: {kubernetes.io/metadata.name: {{ .Release.Namespace | quote }}}
+    objectSelector:
+      matchLabels: {accessportal.io/instance: {{ $name | quote }}}
+    resourceRules:
+      - apiGroups: [accessportal.io]
+        apiVersions: [v1alpha1]
+        resources: [accesstokens]
+        operations: [CREATE, UPDATE]
+  variables:
+    - name: live
+      expression: "object.spec.generations.filter(g, g.status in ['active', 'overlapping'])"
+  validations:
+    - expression: "object.metadata.labels['accessportal.io/owner'] == object.spec.owner"
+      message: Token owner and owner label must match.
+    - expression: "object.spec.gatewayNamespace in {{ .Values.gateway.namespaces | toJson | replace "\"" "'" }}"
+      message: Gateway namespace is outside this installation's scope.
+    - expression: "object.spec.status != 'active' || object.spec.generations.filter(g, g.status == 'active').size() == 1"
+      message: An active token must have exactly one current generation.
+    - expression: >-
+        variables.live.all(g, json.unmarshal(g.entry).metadata.user == object.spec.owner &&
+          json.unmarshal(g.entry).metadata.id == g.id && json.unmarshal(g.entry).metadata.allowedModels == object.spec.models)
+      message: Live hash metadata must match owner, generation and permissions.
+{{- if .Values.enterpriseBudgets.enabled }}
+---
+apiVersion: policies.kyverno.io/v1
+kind: GeneratingPolicy
+metadata:
+  name: {{ $name }}-budgets
+  labels: {accessportal.io/instance: {{ $name | quote }}}
+spec:
+  evaluation:
+    synchronize: {enabled: true}
+    skipBackgroundRequests: false
+  matchConstraints:
+    namespaceSelector:
+      matchLabels: {kubernetes.io/metadata.name: {{ .Release.Namespace | quote }}}
+    objectSelector:
+      matchLabels: {accessportal.io/instance: {{ $name | quote }}}
+    resourceRules:
+      - apiGroups: [accessportal.io]
+        apiVersions: [v1alpha1]
+        resources: [accesstokens]
+        operations: [CREATE, UPDATE]
+  matchConditions:
+    - name: enterprise-active-token
+      expression: "object.spec.gatewayEdition == 'enterprise' && object.spec.status == 'active'"
+  variables:
+    - name: settings
+      expression: "json.unmarshal(resource.Get('v1', 'configmaps', '{{ .Release.Namespace }}', '{{ $name }}-settings').data['settings.json'])"
+    - name: budgets
+      expression: >-
+        object.spec.generations.filter(g, g.status in ['active', 'overlapping']).map(g, {
+          'name': dyn(string(g.id)), 'subject': dyn({'virtualKey': string(g.id)}),
+          'limit': dyn({'amount': dyn(variables.settings.lifecycle.dailyTokenQuota), 'unit': dyn('Tokens')}),
+          'window': dyn({'unit': 'Day'}), 'onBudgetExceeded': dyn('Block')})
+  generate:
+    - template:
+        interpolate: cel
+        value: |
+          apiVersion: enterpriseagentgateway.solo.io/v1alpha1
+          kind: EnterpriseAgentgatewayBudget
+          metadata:
+            name: (( object.metadata.name ))-budget
+            namespace: (( object.spec.gatewayNamespace ))
+            labels:
+              accessportal.io/instance: {{ $name | quote }}
+          spec:
+            budgets: (( variables.budgets ))
+---
+apiVersion: policies.kyverno.io/v1
+kind: MutatingPolicy
+metadata:
+  name: {{ $name }}-budget-settings
+  labels: {accessportal.io/instance: {{ $name | quote }}}
+spec:
+  evaluation:
+    admission: {enabled: true}
+    mutateExisting: {enabled: true}
+  matchConstraints:
+    namespaceSelector:
+      matchLabels: {kubernetes.io/metadata.name: {{ .Release.Namespace | quote }}}
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        resources: [configmaps]
+        resourceNames: [{{ $name }}-settings]
+        operations: [CREATE, UPDATE]
+  variables:
+    - name: settings
+      expression: "json.unmarshal(request.object.data['settings.json'])"
+  targetMatchConstraints:
+    namespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: In
+          values: {{ .Values.gateway.namespaces | toJson }}
+    resourceRules:
+      - apiGroups: [enterpriseagentgateway.solo.io]
+        apiVersions: [v1alpha1]
+        resources: [enterpriseagentgatewaybudgets]
+        operations: [UPDATE]
+  targetMatchConditions:
+    - name: this-installation
+      expression: "has(object.metadata.labels) && object.metadata.labels[?'accessportal.io/instance'].orValue('') == '{{ $name }}'"
+  mutations:
+    - patchType: JSONPatch
+      jsonPatch:
+        expression: >-
+          has(object.spec) ? object.spec.budgets.map(b, JSONPatch{op: 'replace',
+            path: '/spec/budgets/' + string(object.spec.budgets.indexOf(b)) + '/limit/amount',
+            value: variables.settings.lifecycle.dailyTokenQuota}) : []
+{{- end }}

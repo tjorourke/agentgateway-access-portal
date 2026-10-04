@@ -1,0 +1,50 @@
+{{- $name := include "portal.name" . -}}
+{{- $existing := lookup "v1" "ConfigMap" .Release.Namespace (printf "%s-settings" $name) -}}
+{{- if or (not $existing) .Values.settings.resetOnUpgrade }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}-settings
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-5"
+    helm.sh/hook-delete-policy: before-hook-creation
+    helm.sh/resource-policy: keep
+  labels:
+    {{- include "portal.labels" . | nindent 4 }}
+data:
+  settings.json: {{ .Values.config | toJson | quote }}
+{{- end }}
+{{- if not .Values.secrets.existingSecret }}
+---
+{{- $secret := lookup "v1" "Secret" .Release.Namespace (include "portal.secret" .) }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "portal.secret" . }}
+  labels:
+    {{- include "portal.labels" . | nindent 4 }}
+type: Opaque
+data:
+  {{- range $key := list "session-key" "token-encryption-key" "bootstrap-token" }}
+  {{ $key }}: {{ if and $secret (hasKey $secret.data $key) }}{{ index $secret.data $key | quote }}{{ else }}{{ randAlphaNum 64 | b64enc | quote }}{{ end }}
+  {{- end }}
+{{- end }}
+{{- if .Values.serviceAccount.create }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "portal.sa" . }}
+  labels:
+    {{- include "portal.labels" . | nindent 4 }}
+{{- end }}
+{{- if and .Values.kyverno.enabled (not (lookup "v1" "Namespace" "" .Values.kyverno.namespaceOverride)) }}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.kyverno.namespaceOverride }}
+  annotations:
+    helm.sh/resource-policy: keep
+{{- end }}

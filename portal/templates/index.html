@@ -1,0 +1,491 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Access portal</title>
+    <link rel="stylesheet" href="/static/portal.css" />
+    <script src="/static/portal.js" defer></script>
+  </head>
+  <body>
+    <header>
+      <a class="brand" href="/"
+        ><span class="brand-mark" id="brand-mark">A</span
+        ><img id="brand-logo" alt="" hidden /><strong id="company"
+          >Your organisation</strong
+        ><span id="brand-title">Access portal</span></a
+      >
+      <div class="identity" id="identity" hidden>
+        <span id="identity-name"></span
+        ><span class="badge" id="identity-role"></span
+        ><button class="quiet" id="signout">Sign out</button>
+      </div>
+    </header>
+    <main>
+      <section id="gate" class="gate" hidden>
+        <div>
+          <span class="eyebrow">AI PLATFORM</span>
+          <h1 id="gate-title">AI access tokens</h1>
+          <p id="gate-copy">Manage access tokens for your applications.</p>
+          <ul class="intro-list">
+            <li>View token permissions and expiry dates.</li>
+            <li>Rotate credentials with an application handover.</li>
+            <li>Review changes and manage unused tokens.</li>
+          </ul>
+        </div>
+        <div class="card signin-card">
+          <h2 id="signin-title">Employee sign-in</h2>
+          <p id="signin-copy">
+            Continue with your organisation’s identity provider.
+          </p>
+          <a class="button primary" id="oidc-login" href="/auth/login"
+            >Sign in</a
+          >
+          <form id="bootstrap-form" hidden>
+            <label
+              >Bootstrap credential<input
+                id="bootstrap-token"
+                type="password"
+                autocomplete="off"
+                required
+            /></label>
+            <p class="help">
+              Retrieve the bootstrap credential from the Helm installation
+              Secret. It stops working after setup.
+            </p>
+            <button class="primary" type="submit">Set up the portal</button>
+          </form>
+          <p class="error" id="gate-error" role="alert"></p>
+        </div>
+      </section>
+      <div id="shell" class="shell" hidden>
+        <aside>
+          <span class="nav-label">WORKSPACE</span>
+          <nav>
+            <a href="#tokens" data-view="tokens">My tokens</a
+            ><a href="#activity" data-view="activity">Activity</a
+            ><a href="#transcript" data-view="transcript" id="nav-transcript"
+              >API transcript</a
+            ><a href="#policies" data-view="policies" id="nav-policies"
+              >Lifecycle policies</a
+            ><a href="#settings" data-view="settings" id="nav-settings"
+              >Settings</a
+            >
+          </nav>
+          <div class="sidebar-foot">
+            <b>agentgateway Access Portal</b
+            ><span id="sidebar-caption">Employee access management</span>
+          </div>
+        </aside>
+        <div class="workspace">
+          <div class="pagehead">
+            <div>
+              <span class="eyebrow" id="view-eyebrow">EMPLOYEE ACCESS</span>
+              <h1 id="view-title">My access tokens</h1>
+              <p id="view-description">
+                Manage the credentials your applications use.
+              </p>
+            </div>
+            <button class="primary" id="request-open">＋ Request token</button>
+          </div>
+          <section id="view-tokens" class="view">
+            <div id="stats" class="stats"></div>
+            <div class="card">
+              <div class="inventory-tools">
+                <label class="search"
+                  >Search tokens<input
+                    id="search"
+                    type="search"
+                    placeholder="Application, owner or token ID" /></label
+                ><label
+                  >Status<select id="filter">
+                    <option value="">All statuses</option>
+                    <option>active</option>
+                    <option>expired</option>
+                    <option>revoked</option>
+                    <option value="handover">Awaiting handover</option>
+                  </select></label
+                ><button id="refresh">Refresh</button>
+              </div>
+              <div class="bulk" id="bulk" hidden>
+                <b id="bulk-count"></b
+                ><button id="bulk-revoke">Revoke selected</button
+                ><button class="danger" id="bulk-delete">Delete selected</button
+                ><button class="quiet" id="bulk-clear">Clear</button>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>
+                        <input
+                          id="select-all"
+                          type="checkbox"
+                          aria-label="Select all filtered tokens"
+                        />
+                      </th>
+                      <th>Application</th>
+                      <th>Owner</th>
+                      <th>Expires</th>
+                      <th>Status</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody id="token-rows"></tbody>
+                </table>
+              </div>
+              <div class="empty" id="empty" hidden>
+                <h3>No access tokens</h3>
+                <p>
+                  Request a token for an application that needs access to the AI
+                  platform.
+                </p>
+              </div>
+            </div>
+            <section class="card detail" id="detail" hidden></section>
+          </section>
+          <section id="view-activity" class="view" hidden>
+            <div class="card">
+              <div class="card-heading">
+                <h2>Recent activity</h2>
+                <button id="activity-refresh">Refresh</button>
+              </div>
+              <p class="help">
+                Kubernetes Events have limited retention. Platform teams should
+                configure API-server audit logging and retention for durable
+                records.
+              </p>
+              <div id="activity"></div>
+            </div>
+          </section>
+          <section id="view-transcript" class="view" hidden>
+            <div class="card">
+              <h2>Most recent operation</h2>
+              <p class="help">
+                Kubernetes requests made by the portal service account.
+                Credential-storage payloads are redacted.
+              </p>
+              <div id="transcript">
+                <p class="muted">
+                  Run a token operation to see its API requests.
+                </p>
+              </div>
+            </div>
+          </section>
+          <section id="view-policies" class="view" hidden>
+            <div class="card">
+              <div class="card-heading">
+                <h2>Installed lifecycle policies</h2>
+                <button id="policies-refresh">Refresh</button>
+              </div>
+              <p class="help">
+                Policy definitions are managed through Helm or GitOps. Lifecycle
+                settings are managed in Settings.
+              </p>
+              <div id="policies"></div>
+            </div>
+          </section>
+          <section id="view-settings" class="view" hidden>
+            <div class="steps" id="steps">
+              <button data-step="profile">1 · Organisation</button
+              ><button data-step="gateway">2 · Gateway</button
+              ><button data-step="auth">3 · Identity</button
+              ><button data-step="behaviour">4 · Access &amp; lifecycle</button>
+            </div>
+            <form id="settings-form" class="card settings-form" novalidate>
+              <section data-settings="profile">
+                <div class="card-heading">
+                  <div>
+                    <h2>Organisation profile</h2>
+                    <p>Set the company identity shown to employees.</p>
+                  </div>
+                  <label class="upload-button"
+                    >Import profile JSON<input
+                      id="profile-file"
+                      type="file"
+                      accept="application/json,.json"
+                      hidden
+                  /></label>
+                </div>
+                <div class="form-grid">
+                  <label
+                    >Company name<input
+                      id="company-input"
+                      maxlength="80"
+                      required /></label
+                  ><label
+                    >Portal title<input
+                      id="title-input"
+                      maxlength="100"
+                      required /></label
+                  ><label class="wide"
+                    >Sign-in description<input
+                      id="subtitle-input"
+                      maxlength="240"
+                      required /></label
+                  ><label
+                    >Accent colour<input
+                      id="accent-input"
+                      type="color" /></label
+                  ><label
+                    >Company logo<input
+                      id="logo-file"
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp"
+                    /><small
+                      >PNG, JPEG or WebP, up to 128 KB. Images are validated and
+                      re-encoded.</small
+                    ></label
+                  >
+                </div>
+                <div class="profile-preview">
+                  <img
+                    id="logo-preview"
+                    alt="Company logo preview"
+                    hidden
+                  /><span id="profile-preview-name"></span
+                  ><button class="quiet" id="remove-logo" type="button">
+                    Remove logo
+                  </button>
+                </div>
+              </section>
+              <section data-settings="gateway" hidden>
+                <h2>Gateway connection</h2>
+                <p>
+                  Choose an existing agentgateway Gateway in the namespaces
+                  permitted by the Helm chart.
+                </p>
+                <div class="form-grid">
+                  <label class="wide"
+                    >Discovered Gateway<select
+                      id="gateway-input"
+                      required
+                    ></select></label
+                  ><label class="wide"
+                    >Gateway test base URL<input
+                      id="test-url-input"
+                      type="url"
+                      placeholder="http://gateway.namespace.svc.cluster.local:8080"
+                    /><small
+                      >Optional OpenAI-compatible endpoint. Required for
+                      gateway-verified rotation completion.</small
+                    ></label
+                  ><label
+                    >Test model<input
+                      id="test-model-input"
+                      placeholder="Model name" /></label
+                  ><label
+                    >Allowed model names<textarea
+                      id="models-input"
+                      rows="3"
+                      placeholder="One per line"
+                      required
+                    ></textarea>
+                  </label>
+                </div>
+                <div class="scope-note">
+                  <b>Kubernetes access scope</b>
+                  <p id="scope-text"></p>
+                  <div id="permissions"></div>
+                </div>
+              </section>
+              <section data-settings="auth" hidden>
+                <h2>Employee identity</h2>
+                <p>
+                  Use an OpenID Connect provider. Administrator membership is
+                  determined from verified group claims, never a
+                  browser-supplied role.
+                </p>
+                <div class="form-grid">
+                  <label class="wide"
+                    >Issuer URL<input
+                      id="issuer-input"
+                      type="url"
+                      placeholder="https://identity.example.com/realms/employees"
+                      required /></label
+                  ><label>Client ID<input id="client-input" required /></label
+                  ><label
+                    >Group claim name<input
+                      id="groups-claim-input"
+                      required /></label
+                  ><label
+                    >Administrator groups<textarea
+                      id="admin-groups-input"
+                      rows="3"
+                      placeholder="One per line"
+                      required
+                    ></textarea></label
+                  ><label
+                    >Employee groups<textarea
+                      id="user-groups-input"
+                      rows="3"
+                      placeholder="One per line"
+                    ></textarea></label
+                  ><label class="checkbox wide"
+                    ><input
+                      id="allow-authenticated-input"
+                      type="checkbox"
+                    />Allow any authenticated employee, even without an
+                    employee-group match</label
+                  >
+                </div>
+                <div class="scope-note">
+                  <b>Identity-provider client configuration</b>
+                  <p>
+                    Register <code id="callback-url"></code> as the redirect
+                    URI. Enable the authorisation-code flow with PKCE, and
+                    include the configured group claim in ID tokens.
+                  </p>
+                  <p id="secret-status"></p>
+                  <p>
+                    Client secrets are supplied through a Kubernetes Secret
+                    referenced by Helm. They are not stored in the settings
+                    ConfigMap.
+                  </p>
+                </div>
+              </section>
+              <section data-settings="behaviour" hidden>
+                <h2>Access &amp; lifecycle</h2>
+                <div class="form-grid">
+                  <label
+                    >Default expiry (minutes)<input
+                      id="expiry-input"
+                      type="number"
+                      min="1"
+                      max="525600"
+                      required /></label
+                  ><label
+                    >Prepare rotation after (minutes)<input
+                      id="rotation-input"
+                      type="number"
+                      min="1"
+                      max="525600"
+                      required /></label
+                  ><label
+                    >Daily LLM token budget per generation<input
+                      id="quota-input"
+                      type="number"
+                      min="100"
+                      max="1000000000"
+                      required
+                    /><small
+                      >Enterprise agentgateway. Each credential generation has a
+                      separate budget.</small
+                    ></label
+                  ><label class="checkbox"
+                    ><input id="auto-rotate-input" type="checkbox" />Prepare
+                    replacement tokens automatically</label
+                  >
+                </div>
+                <h3>Employee visibility</h3>
+                <p class="help">
+                  Administrators always have access. These flags also restrict
+                  the employee API responses.
+                </p>
+                <label class="checkbox"
+                  ><input id="show-transcript-input" type="checkbox" />Show API
+                  transcripts to employees</label
+                ><label class="checkbox"
+                  ><input id="show-policies-input" type="checkbox" />Show
+                  lifecycle policies to employees</label
+                >
+                <div class="scope-note">
+                  <b>Reconciliation</b>
+                  <p id="reconciler-info"></p>
+                  <p>
+                    Settings are stored in a ConfigMap. Session keys, OIDC
+                    client credentials and encrypted token values use Secrets.
+                    The bootstrap credential is disabled once setup finishes.
+                  </p>
+                </div>
+              </section>
+              <div class="settings-actions">
+                <button type="button" id="settings-back">Back</button
+                ><span id="settings-status" role="status"></span
+                ><button type="button" class="primary" id="settings-next">
+                  Continue</button
+                ><button
+                  type="submit"
+                  class="primary"
+                  id="settings-save"
+                  hidden
+                >
+                  Save settings
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      </div>
+    </main>
+    <dialog id="request-dialog">
+      <form id="request-form">
+        <div class="dialog-head">
+          <h2>Request an access token</h2>
+          <button
+            class="quiet"
+            type="button"
+            data-close="request-dialog"
+            aria-label="Close"
+          >
+            ×
+          </button>
+        </div>
+        <label
+          >Application / purpose<input id="token-label" maxlength="80" required
+        /></label>
+        <fieldset>
+          <legend>Model permissions</legend>
+          <div id="request-models" class="model-options"></div>
+        </fieldset>
+        <label
+          >Expiry in minutes<input
+            id="token-expiry"
+            type="number"
+            min="1"
+            max="525600"
+            required
+        /></label>
+        <p class="help">
+          The portal stores the value encrypted. Only its hash is published to
+          the gateway.
+        </p>
+        <p class="error" id="request-error" role="alert"></p>
+        <div class="dialog-actions">
+          <button type="button" data-close="request-dialog">Cancel</button
+          ><button type="submit" class="primary" id="token-create">
+            Request token
+          </button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="value-dialog">
+      <div class="dialog-head">
+        <h2>Token value</h2>
+        <button class="quiet" data-close="value-dialog" aria-label="Close">
+          ×
+        </button>
+      </div>
+      <p>Copy this value into your application’s secret store.</p>
+      <code class="secret" id="token-value"></code>
+      <p id="value-note" class="help"></p>
+      <div class="dialog-actions">
+        <button id="copy-token">Copy token</button
+        ><button class="primary" data-close="value-dialog">Done</button>
+      </div>
+    </dialog>
+    <dialog id="confirm-dialog">
+      <div class="dialog-head"><h2 id="confirm-title"></h2></div>
+      <p id="confirm-copy"></p>
+      <div class="dialog-actions">
+        <button id="confirm-cancel">Cancel</button
+        ><button class="primary" id="confirm-yes">Continue</button>
+      </div>
+    </dialog>
+    <div id="notice" class="notice" role="status" hidden></div>
+    <footer>
+      agentgateway Access Portal
+      <span>Community project · Kubernetes-managed access</span>
+    </footer>
+  </body>
+</html>

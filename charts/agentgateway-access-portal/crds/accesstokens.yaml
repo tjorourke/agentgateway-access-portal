@@ -1,0 +1,47 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: accesstokens.accessportal.io
+spec:
+  group: accessportal.io
+  scope: Namespaced
+  names:
+    kind: AccessToken
+    plural: accesstokens
+    singular: accesstoken
+    shortNames: [aptoken]
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true
+              required: [owner, ownerName, label, status, models, generations, gatewayNamespace, gatewayName, expiresAt]
+              properties:
+                owner: {type: string, pattern: '^u-[a-f0-9]{24}$'}
+                ownerName: {type: string, maxLength: 128}
+                label: {type: string, minLength: 1, maxLength: 80}
+                status: {type: string, enum: [active, expired, revoked]}
+                models:
+                  type: array
+                  minItems: 1
+                  maxItems: 100
+                  items: {type: string, minLength: 1, maxLength: 120}
+                expiresAt: {type: string, format: date-time}
+                gatewayNamespace: {type: string}
+                gatewayName: {type: string}
+                generations:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+      additionalPrinterColumns:
+        - {name: Owner, type: string, jsonPath: .spec.ownerName}
+        - {name: Status, type: string, jsonPath: .spec.status}
+        - {name: Expires, type: string, jsonPath: .spec.expiresAt}

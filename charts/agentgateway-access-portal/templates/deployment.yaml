@@ -1,0 +1,103 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "portal.name" . }}
+  labels:
+    {{- include "portal.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      accessportal.io/instance: {{ include "portal.name" . | quote }}
+      app.kubernetes.io/component: portal
+  template:
+    metadata:
+      labels:
+        {{- include "portal.labels" . | nindent 8 }}
+        app.kubernetes.io/component: portal
+    spec:
+      serviceAccountName: {{ include "portal.sa" . }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: portal
+          image: {{ printf "%s:%s" .Values.image.repository .Values.image.tag | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          ports: [{name: http, containerPort: 8080}]
+          env:
+            - {name: PORTAL_NAMESPACE, value: {{ .Release.Namespace | quote }}}
+            - {name: PORTAL_INSTANCE, value: {{ include "portal.name" . | quote }}}
+            - {name: PUBLIC_URL, value: {{ .Values.publicURL | quote }}}
+            - {name: GATEWAY_NAMESPACES, value: {{ join "," .Values.gateway.namespaces | quote }}}
+            - {name: MANAGE_GATEWAY_POLICY, value: {{ .Values.gateway.managePolicy | quote }}}
+            - {name: ENTERPRISE_BUDGETS, value: {{ .Values.enterpriseBudgets.enabled | quote }}}
+            - {name: ALLOW_INSECURE_OIDC, value: {{ .Values.auth.allowInsecureOIDC | quote }}}
+            - {name: SESSION_SECONDS, value: {{ .Values.auth.sessionSeconds | quote }}}
+            - {name: RECONCILER_MODE, value: {{ ternary "kyverno" "external" .Values.policies.enabled | quote }}}
+            {{- range $key, $env := dict "session-key" "SESSION_KEY" "token-encryption-key" "TOKEN_ENCRYPTION_KEY" "bootstrap-token" "BOOTSTRAP_TOKEN" }}
+            - name: {{ $env }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "portal.secret" $ }}
+                  key: {{ $key }}
+            {{- end }}
+            {{- if .Values.auth.clientSecret.existingSecret }}
+            - name: OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auth.clientSecret.existingSecret }}
+                  key: {{ .Values.auth.clientSecret.key }}
+            {{- end }}
+          readinessProbe: {httpGet: {path: /readyz, port: http}, initialDelaySeconds: 3, periodSeconds: 5}
+          livenessProbe: {httpGet: {path: /healthz, port: http}, initialDelaySeconds: 10, periodSeconds: 15}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts: [{name: tmp, mountPath: /tmp}]
+      volumes: [{name: tmp, emptyDir: {}}]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "portal.name" . }}
+  labels:
+    {{- include "portal.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    accessportal.io/instance: {{ include "portal.name" . | quote }}
+    app.kubernetes.io/component: portal
+  ports: [{name: http, port: {{ .Values.service.port }}, targetPort: http}]
+{{- if .Values.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "portal.name" . }}
+  annotations:
+    {{- toYaml .Values.ingress.annotations | nindent 4 }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- with .Values.ingress.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "portal.name" . }}
+                port: {name: http}
+{{- end }}
