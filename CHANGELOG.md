@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.1
+
+Explicitly limit Python package discovery to the application. Fresh repository
+installs now exclude Helm chart directories from Python package detection.
+
 ## 0.1.0
 
 Initial standalone release: organisation-neutral employee and administrator portal,

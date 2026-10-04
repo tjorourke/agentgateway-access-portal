@@ -1,6 +1,6 @@
 image:
   repository: ghcr.io/tjorourke/agentgateway-access-portal
-  tag: "0.1.0"
+  tag: "0.1.1"
   pullPolicy: IfNotPresent
 replicaCount: 1
 publicURL: http://localhost:8080
