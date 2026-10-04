@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.2
+
+Register the Kyverno chart repository in clean CI environments and installation
+instructions so dependency builds work with Helm 3 as well as Helm 4.
+
 ## 0.1.1
 
 Explicitly limit Python package discovery to the application. Fresh repository

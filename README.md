@@ -36,6 +36,7 @@ The default uses an **existing Kyverno** installation and deploys the portal pol
 ```bash
 git clone https://github.com/tjorourke/agentgateway-access-portal.git
 cd agentgateway-access-portal
+helm repo add kyverno https://kyverno.github.io/kyverno
 helm dependency build charts/agentgateway-access-portal
 
 helm upgrade --install access-portal charts/agentgateway-access-portal \
@@ -197,6 +198,7 @@ Do not skip uninstall hooks if you depend on that withdrawal. Remove retained re
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e '.[test]'
+helm repo add kyverno https://kyverno.github.io/kyverno
 helm dependency build charts/agentgateway-access-portal
 pytest -q
 helm lint charts/agentgateway-access-portal
